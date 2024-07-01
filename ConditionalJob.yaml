@@ -1,0 +1,52 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'windows-latest'
+
+jobs:
+- job: DownloadArtifacts
+  steps:
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      artifact: 'last-artifact'
+      path: '$(Build.ArtifactStagingDirectory)/last'
+
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      artifact: 'previous-artifact'
+      path: '$(Build.ArtifactStagingDirectory)/previous'
+
+  - task: PowerShell@2
+    inputs:
+      targetType: 'inline'
+      script: |
+        $lastDir = "$(Build.ArtifactStagingDirectory)/last"
+        $previousDir = "$(Build.ArtifactStagingDirectory)/previous"
+        $diff = Compare-Object -ReferenceObject (Get-ChildItem -Recurse $lastDir) -DifferenceObject (Get-ChildItem -Recurse $previousDir) -Property Name, Length, LastWriteTime
+        $diff | ForEach-Object { $_.Name } | Out-File -FilePath "$(Build.ArtifactStagingDirectory)/diff.txt"
+        if ($diff | Where-Object { $_.Name -eq 'filename.ext' }) {
+          Write-Host "##vso[task.setvariable variable=fileChanged;isOutput=true]true"
+        } else {
+          Write-Host "##vso[task.setvariable variable=fileChanged;isOutput=true]false"
+        }
+    displayName: 'Compare Artifacts with PowerShell'
+    name: CompareArtifacts
+
+- job: ConditionalJob
+  dependsOn: DownloadArtifacts
+  condition: eq(dependencies.DownloadArtifacts.outputs['CompareArtifacts.fileChanged'], 'true')
+  steps:
+  - task: PowerShell@2
+    inputs:
+      targetType: 'inline'
+      script: |
+        $diffFile = "$(Build.ArtifactStagingDirectory)/diff.txt"
+        if (Test-Path $diffFile) {
+          $diffContent = Get-Content $diffFile
+          foreach ($file in $diffContent) {
+            Write-Host "Processing $file"
+            # Ajoute ici les commandes spécifiques à chaque fichier
+          }
+        }
+    displayName: 'Process Diff Files'
